@@ -129,7 +129,7 @@ waterpeach/
 ```
 
 ### Thiết kế Cơ sở Dữ liệu Cốt lõi (Supabase PostgreSQL)
-- **`users`**: `id`, `name`, `role` (`victim` | `guardian` | `fraud_ops`), `age_group`, `avatar`, `protection_threshold`.
+- **`users`**: `id`, `name`, `role` (`victim` | `guardian` | `fraud_ops`), `phone`, `account_number`, `bank_name`, `balance` (chỉ hiển thị cho `victim`, ẩn hoàn toàn khỏi `guardian`), `age_group`, `avatar`, `protection_threshold`, `sensitive_hours_enabled`.
 - **`family_links`**: `id`, `victim_id`, `guardian_id`, `relationship`, `privacy_mode` (`alert_only`), `status`.
 - **`transactions`**: `id`, `sender_id`, `recipient_name`, `recipient_account`, `recipient_bank`, `amount`, `transfer_note`, `status` (`completed` | `cooling_off` | `blocked` | `released`), `ai_risk_score`, `ai_analysis_json`, `guardian_decision` (`pending` | `flag_scam` | `approve_safe` | `hold_verify`), `ops_decision` (`pending` | `confirmed_fraud` | `false_positive`), `created_at`.
 - **`scam_reports`**: `id`, `submitted_by`, `image_url`, `raw_text`, `ai_verdict`, `tactics_detected`, `extracted_entities_json` (SĐT, STK, URL), `shared_to_family`, `created_at`.
@@ -145,9 +145,13 @@ Chi tiết payload request/response, mã trạng thái và cấu trúc sự ki�
 | :--- | :--- | :--- |
 | **System** | `GET /health` | Readiness probe cho container & dịch vụ |
 | **B2B Partner API** | `POST /api/v1/risk/evaluate` | Core Banking gửi giao dịch chấm điểm rủi ro (`X-API-Key`) |
-| **Victim & Family** | `POST /api/v1/transactions/transfer` | Khởi tạo giao dịch chuyển tiền có Cầu dao xã hội |
+| **Mobile Banking & Victim** | `GET /api/v1/users/{user_id}/profile` | Lấy số dư ví thật, hồ sơ Mobile Banking & lịch sử giao dịch |
+| | `GET /api/v1/transactions/lookup-account` | Tra cứu tên người nhận & kiểm tra Blacklist theo thời gian thực |
+| | `POST /api/v1/transactions/transfer` | Khởi tạo giao dịch chuyển tiền có Cầu dao xã hội |
 | | `GET /api/v1/transactions/{tx_id}` | Theo dõi trạng thái & đồng hồ đếm ngược cooling-off |
-| | `GET /api/v1/family/trusted-circle` | Lấy Vòng tròn tin cậy & ngưỡng bảo vệ |
+| **Nhóm Gia đình (Trusted Circle)** | `GET /api/v1/family/trusted-circle` | Lấy danh sách thành viên nhóm gia đình & ngưỡng bảo vệ |
+| | `POST /api/v1/family/members` | Thêm / mời thành viên giám hộ vào Nhóm Gia đình |
+| | `DELETE /api/v1/family/members/{link_id}` | Gỡ thành viên khỏi Nhóm Gia đình |
 | | `PUT /api/v1/family/settings` | Cấu hình hạn mức & khung giờ nhạy cảm |
 | **Guardian Hub** | `GET /api/v1/guardian/alerts` | Danh sách cảnh báo tối giản chuẩn Privacy-First |
 | | `POST /api/v1/guardian/transactions/{tx_id}/decision` | Quyết định 1-chạm (`flag_scam` / `approve_safe` / `hold_verify`) |
@@ -156,7 +160,7 @@ Chi tiết payload request/response, mã trạng thái và cấu trúc sự ki�
 | **Fraud Ops** | `GET /api/v1/ops/incidents` | Hàng đợi ưu tiên AI-Triaged Incident Queue |
 | | `GET /api/v1/ops/incidents/{tx_id}/brief` | AI Case Brief + Network Intel + De-escalation Call Script |
 | | `POST /api/v1/ops/incidents/{tx_id}/action` | 1-Click Containment (hoàn tiền, blacklist, xuất báo cáo) |
-| | `GET` / `POST /api/v1/ops/blacklist` | Tra cứu & cập nhật danh sách đen hệ thống |
+| | `GET` / `POST` / `api/v1/ops/blacklist` | Tra cứu & cập nhật danh sách đen hệ thống |
 | **AI Engines** | `POST /api/v1/ai/analyze-tx`, `/analyze-scam`, `/ops-copilot` | Gọi trực tiếp 3 động cơ AI Gemini |
 | **Demo & Realtime** | `POST /api/v1/demo/scenario/{1\|2\|3}`, `/demo/reset` | Kịch bản mẫu 1-chạm & reset dữ liệu sạch |
 | | `WS /api/v1/ws/events` | Kênh đẩy sự kiện real-time giữa 3 vai trò |
@@ -179,15 +183,17 @@ Chi tiết payload request/response, mã trạng thái và cấu trúc sự ki�
 
 ---
 
-## 7. Trải nghiệm Demo Không Rào Cản (Zero-Friction Demo UX)
+## 7. Trải nghiệm Mobile Banking Thực chiến & Zero-Friction Demo UX
 
-Thiết kế tối ưu cho Ban Giám khảo tự kiểm thử trọn vẹn luồng thời gian thực trong vòng 2–3 phút mà không cần đăng nhập phức tạp:
-- **Top Role Switcher Bar:** Chuyển đổi 1-chạm giữa 3 không gian làm việc (*Bác Minh* — *Anh Nam* — *Chị Linh*) + tab *B2B API & SDK Playground*.
-- **Bộ Kịch bản Mẫu 1-Chạm (One-Click Test Scenarios):**
+Sản phẩm được thiết kế như một **ứng dụng Mobile Banking hoàn chỉnh** (chứ không chỉ là các nút bấm test rời rạc) để Ban Giám khảo trải nghiệm chân thực cách **waterpeach SDK** vận hành bên trong app Ngân hàng / Ví điện tử:
+- **Mobile-in-Web Shell (cho Bác Minh & Anh Nam):** Hiển thị trong khung điện thoại trực quan với số dư ví thật, lịch sử giao dịch, thanh điều hướng và các tiện ích ngân hàng. Trong đó các tính năng cốt lõi (**Chuyển tiền**, **Tạo & quản lý Nhóm Gia đình**, **Kiểm tra Lừa đảo AI**, **Xác thực 1-chạm**) hoạt động **thật 100% end-to-end** với Supabase DB và Gemini AI; các tiện ích phụ trợ (nạp ĐT, hóa đơn...) đóng vai trò hoàn thiện trải nghiệm thị giác của app ngân hàng.
+- **Desktop Future Workspace (cho Chị Linh - Fraud Ops):** Giao diện vận hành chuyên nghiệp toàn màn hình.
+- **Top Role Switcher & Split-View Mode:** Chuyển đổi 1-chạm giữa 3 vai trò (*Bác Minh* — *Anh Nam* — *Chị Linh*), hỗ trợ **chế độ xem song song 2 điện thoại** (*Bác Minh* + *Anh Nam*) để quan sát thông báo real-time tức thì, kèm tab *B2B API & SDK Playground*.
+- **Bộ Kịch bản Mẫu 1-Chạm (Quick-Fill & One-Click Scenarios):**
   1. *Kịch bản 1 (Lừa đảo mạo danh Công an):* Chuyển 25.000.000 VNĐ kèm nội dung *"Nop tien tam giu xac minh ho so"* → Cầu dao xã hội kích hoạt → Người giám hộ bấm Chặn → Fraud Ops nhận cảnh báo đỏ, sinh kịch bản gọi điện và đưa STK vào Blacklist.
   2. *Kịch bản 2 (Giao dịch hợp lệ — Giảm cảnh báo giả):* Chuyển 18.000.000 VNĐ cho cửa hàng xe máy → Tạm giữ → Người giám hộ bấm *"An toàn, đang ở cùng bố"* → Giải ngân tức thì, Fraud Ops tự động đóng case.
   3. *Kịch bản 3 (Quét ảnh tin nhắn lừa đảo):* Tải lên ảnh chụp màn hình tin nhắn giả mạo shipper/thuế → AI phân tích dấu hiệu thao túng → Trích xuất STK lạ vào Threat Intelligence DB.
-- **Nút "Reset Demo Data":** Khôi phục dữ liệu sạch chỉ với 1 cú nhấp chuột.
+- **Nút "Reset Demo Data":** Khôi phục số dư ví và dữ liệu sạch chỉ với 1 cú nhấp chuột.
 
 ---
 

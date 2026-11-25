@@ -87,10 +87,52 @@ Endpoint chuẩn B2B cho phép Core Banking / Ví điện tử gửi payload gia
 
 ---
 
-## 4. Phân hệ 1: Embedded Banking UI (Victim & Trusted Circle)
+## 4. Phân hệ 1: Embedded Banking UI (Mobile Banking & Trusted Circle)
+
+### `GET /api/v1/users/{user_id}/profile`
+Lấy hồ sơ tài khoản Mobile Banking của Thành viên được bảo vệ (Bác Minh) để hiển thị màn hình Home: số dư ví thật (`balance`), số tài khoản, cấu hình ngưỡng bảo vệ và lịch sử giao dịch gần đây.
+- **Ràng buộc Privacy-First:** Endpoint này chỉ phục vụ màn hình Mobile Banking của chính chủ tài khoản (`victim`), tuyệt đối không dùng cho vai trò `guardian`.
+- **Response `200 OK`:**
+```json
+{
+  "user_id": "usr_minh_01",
+  "name": "Bác Minh",
+  "role": "victim",
+  "phone": "0901234567",
+  "account_number": "1012345678",
+  "bank_name": "MoMo / Vietcombank",
+  "balance": 85000000,
+  "protection_threshold": 5000000,
+  "sensitive_hours_enabled": true,
+  "recent_transactions": [
+    {
+      "tx_id": "tx_seed_01",
+      "recipient_name": "Siêu thị Co.opmart",
+      "amount": 450000,
+      "status": "completed",
+      "created_at": "2026-11-24T09:15:00+07:00"
+    }
+  ]
+}
+```
+
+### `GET /api/v1/transactions/lookup-account?bank={bank}&account={account}&sender_id={sender_id}`
+Tra cứu tên chủ tài khoản nhận theo thời gian thực khi người dùng nhập STK trên màn hình chuyển tiền Mobile Banking, đồng thời kiểm tra xem người nhận là người quen, người lạ mới, hay đã nằm trong `threat_blacklist`.
+- **Response `200 OK`:**
+```json
+{
+  "account_number": "190388889999",
+  "bank_name": "Techcombank",
+  "account_holder_name": "NGUYEN VAN A",
+  "is_familiar_recipient": false,
+  "blacklist_status": "none",
+  "warning_banner": null
+}
+```
+*(Nếu `blacklist_status` là `"suspected"` hoặc `"confirmed_blacklisted"`, trả về `warning_banner` để hiển thị cảnh báo ngay trên form chuyển tiền.)*
 
 ### `POST /api/v1/transactions/transfer`
-Khởi tạo giao dịch chuyển tiền từ giao diện Embedded Banking UI (Bác Minh). Gọi qua cùng lõi Risk Engine + Social Circuit Breaker.
+Khởi tạo giao dịch chuyển tiền từ giao diện Embedded Banking UI (Bác Minh). Gọi qua cùng lõi Risk Engine + Social Circuit Breaker, trừ/tạm giữ số dư thật trên tài khoản `balance`.
 - **Request Body:** Tương tự `POST /api/v1/risk/evaluate` (không bắt buộc `X-API-Key` cho demo web client).
 - **Response `201 Created`:** Trả về object `TransactionDetail` kèm `cooling_off_expires_at` (ISO-8601) nếu bị tạm giữ.
 
@@ -123,7 +165,30 @@ Lấy trạng thái mới nhất của giao dịch (bao gồm đếm ngược co
 ```
 
 ### `GET /api/v1/family/trusted-circle?victim_id={victim_id}`
-Lấy danh sách người giám hộ trong Vòng tròn tin cậy và cấu hình ngưỡng bảo vệ (Privacy-First).
+Lấy danh sách thành viên trong Vòng tròn tin cậy (nhóm gia đình) và cấu hình ngưỡng bảo vệ (Privacy-First).
+
+### `POST /api/v1/family/members`
+Tạo / mời thêm thành viên giám hộ vào Nhóm Gia đình (Trusted Circle) của người được bảo vệ.
+- **Request Body:**
+```json
+{
+  "victim_id": "usr_minh_01",
+  "guardian_name": "Chị Lan",
+  "guardian_phone": "0912345678",
+  "relationship": "Con gái"
+}
+```
+- **Response `201 Created`:** Trả về đối tượng `FamilyLink` vừa tạo (`link_id`, `guardian_id`, `guardian_name`, `relationship`, `privacy_mode: "alert_only"`, `status: "active"`).
+
+### `DELETE /api/v1/family/members/{link_id}`
+Gỡ bỏ một thành viên giám hộ khỏi Nhóm Gia đình (`Trusted Circle`).
+- **Response `200 OK`:**
+```json
+{
+  "deleted": true,
+  "link_id": "lnk_02"
+}
+```
 
 ### `PUT /api/v1/family/settings`
 Cập nhật ngưỡng bảo vệ cho người được bảo vệ (`protection_threshold`, `sensitive_hours_enabled`, `auto_trigger_high_risk`).
@@ -343,3 +408,13 @@ Danh sách `event` chuẩn:
 - `OPS_CONTAINMENT_EXECUTED`
 - `FAMILY_SCAM_ALERT_SHARED`
 - `DEMO_DATA_RESET`
+
+---
+
+## 10. Đặc tả UX: Mobile Banking Shell & Chế độ Xem Song Song (Split-View)
+
+Để sản phẩm thể hiện đúng mô hình **Embedded SDK trong Ứng dụng Mobile Banking** thay vì một trang form demo đơn thuần:
+- **Khung điện thoại Mobile-in-Web (`victim` & `guardian`):**
+  - **Các luồng chạy thật 100% end-to-end (DB + AI + Realtime):** Màn hình Home hiển thị số dư thật (`balance`) & lịch sử giao dịch; luồng chuyển tiền + tra cứu STK người nhận (`lookup-account`) + Cầu dao xã hội (`cooling_off`); tạo/thêm/xóa thành viên nhóm gia đình (`Trusted Circle`) và cấu hình hạn mức; quét ảnh/tin nhắn lừa đảo đa phương thức (`scam-check`); xác nhận 1-chạm từ điện thoại người giám hộ.
+  - **Các tiện ích ngân hàng phụ trợ (Visual Shell):** Nạp điện thoại, thanh toán hóa đơn, quét QR nhận tiền... hiển thị để hoàn thiện trải nghiệm Mobile Banking chân thực (khi nhấn hiện toast thông báo phạm vi demo).
+- **Chế độ hiển thị (Role Switcher Bar):** Hỗ trợ chuyển đổi từng vai trò (*Bác Minh* / *Anh Nam* / *Chị Linh*) hoặc bật **Split-View (2 điện thoại cạnh nhau)** để quan sát giao dịch từ Bác Minh kích hoạt cảnh báo real-time trên máy Anh Nam ngay lập tức.
