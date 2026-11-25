@@ -1,0 +1,72 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+.pnpm-store/
+
+# Next.js / Frontend build outputs
+waterpeach-web/.next/
+waterpeach-web/out/
+waterpeach-web/build/
+waterpeach-web/next-env.d.ts
+*.tsbuildinfo
+
+# Python / uv / FastAPI
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+waterpeach-api/lib/
+waterpeach-api/lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environment variables (keep .env.example)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+!**/.env.example
+
+# Docker & Database local data
+postgres_data/
+redis_data/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
