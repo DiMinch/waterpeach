@@ -21,7 +21,10 @@ Tài liệu đặc tả giao thức giao tiếp giữa **Frontend (`waterpeach-w
 - **`TransactionStatus`**: `"completed"` | `"cooling_off"` | `"blocked"` | `"released"`
 - **`GuardianDecision`**: `"pending"` | `"flag_scam"` | `"approve_safe"` | `"hold_verify"`
 - **`OpsDecision`**: `"pending"` | `"confirmed_fraud"` | `"false_positive"`
-- **`PsychologicalTactic`**: `"URGENCY"` | `"AUTHORITY"` | `"FEAR"` | `"GREED"`
+- **`PsychologicalTactic`**: `"AUTHORITY"` | `"URGENCY"` | `"FEAR"` | `"GREED"` | `"RECIPROCITY_COMMITMENT"`
+- **`VictimAgeGroup`**: `"under_18"` | `"18_25_student"` | `"26_55_adult"` | `"55_plus_senior"`
+- **`GuardianRelationship`**: `"parent_of_victim"` | `"child_of_victim"` | `"spouse"` | `"other"`
+- **`RecipientEntityType`**: `"INDIVIDUAL"` | `"MERCHANT_HKD"` | `"CORPORATION"` | `"UNKNOWN"`
 - **`EntityType`**: `"bank_account"` | `"phone"` | `"url"`
 
 ### 1.3. Chuẩn Lỗi HTTP
@@ -374,10 +377,142 @@ Tra cứu và bổ sung thủ công thực thể vào Threat Blacklist (`bank_ac
 
 ## 8. AI Engine Direct Endpoints (Debugging & SDK Testing)
 
-3 endpoint ánh xạ trực tiếp tới 3 động cơ AI cốt lõi trong Proposal:
-- `POST /api/v1/ai/analyze-tx` — Chấm điểm rủi ro ngữ cảnh cho payload giao dịch JSON.
-- `POST /api/v1/ai/analyze-scam` — Phân tích đa phương thức ảnh/text/audio.
-- `POST /api/v1/ai/ops-copilot` — Sinh Case Brief & Call Script hạ nhiệt từ ngữ cảnh hồ sơ.
+Chi tiết kiến trúc Ma trận Chấm điểm Đa chiều, thuật toán Giám định Ảnh (ELA) và cơ chế chống spam/tấn công xem tại **[docs/AI_ARCHITECTURE.md](AI_ARCHITECTURE.md)**. Các response dưới đây giữ nguyên định dạng thân thiện với người dùng cuối (không chứa `scientific_references`).
+
+### `POST /api/v1/ai/analyze-tx`
+Chấm điểm rủi ro ngữ cảnh đa chiều cho giao dịch (RFM/Structuring + Relationship Graph + Behavioral Telemetry + Semantic NLP + Entity/MST check).
+- **Request Body:**
+```json
+{
+  "amount": 25000000,
+  "balance": 85000000,
+  "recipient_name": "NGUYEN VAN A",
+  "recipient_account": "190388889999",
+  "recipient_bank": "Techcombank",
+  "recipient_tax_code": null,
+  "transfer_note": "Nop tien tam giu xac minh ho so",
+  "persona_context": {
+    "victim_age_group": "55_plus_senior",
+    "guardian_relationship": "child_of_victim"
+  },
+  "relationship_context": {
+    "prior_tx_count": 0,
+    "protection_threshold": 5000000,
+    "blacklist_hit": false
+  },
+  "velocity_context": {
+    "tx_count_15m": 1,
+    "cumulative_unfamiliar_amount_60m": 25000000,
+    "seconds_since_last_tx": null,
+    "is_sensitive_hours": false
+  },
+  "telemetry_context": {
+    "in_active_call": true,
+    "is_copy_pasted_account": true
+  }
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "risk_score": 96,
+  "risk_level": "CRITICAL",
+  "recommended_status": "cooling_off",
+  "cooling_off_seconds": 900,
+  "scam_category": "POLICE_IMPERSONATION",
+  "recipient_entity_type": "INDIVIDUAL",
+  "merchant_verified": false,
+  "detected_signals": [
+    "FIRST_TIME_PAYEE",
+    "ENTITY_CONTEXT_MISMATCH",
+    "ACTIVE_CALL_COERCION_SIGNATURE",
+    "THRESHOLD_EXCEEDED"
+  ],
+  "reasoning_for_victim": "Bác ơi, nội dung chuyển khoản này rất giống kịch bản giả danh cơ quan chức năng yêu cầu nộp tiền xác minh. Hệ thống tạm giữ 15 phút để người thân kiểm tra giúp bác nhé.",
+  "reasoning_for_guardian": "Phát hiện chuyển 25.000.000đ tới tài khoản cá nhân mới trong lúc đang nghe điện thoại, nội dung có dấu hiệu giả danh công an tạm giữ hồ sơ.",
+  "used_fallback": false
+}
+```
+
+### `POST /api/v1/ai/analyze-scam`
+Phân tích đa phương thức ảnh chụp màn hình tin nhắn Zalo/SMS, công văn giả hoặc đoạn text hội thoại (kết hợp Pixel-level ELA/EXIF Forensics + Gemini VLM + PhishVN URL Lexical Check + Regex IOC).
+- Hỗ trợ JSON (`raw_text`, `image_base64`, `image_mime_type`) hoặc `multipart/form-data` (upload file tối đa `5 MB`, kiểm tra Magic Bytes).
+- **Response `200 OK`:**
+```json
+{
+  "verdict": "HIGH_RISK_SCAM",
+  "risk_score": 92,
+  "scam_category": "FAKE_AUTHORITY_DOCUMENT",
+  "summary": "Công văn/tin nhắn có dấu hiệu giả mạo cơ quan chức năng nhằm đe dọa và yêu cầu chuyển tiền xác minh.",
+  "forensic_analysis": {
+    "software_signature": "Canva",
+    "ela_anomaly_score": 78.4,
+    "tampering_suspected": true,
+    "forensic_note": "Phát hiện chữ ký phần mềm chỉnh sửa và bất thường mức nén điểm ảnh cục bộ tại vùng con dấu/số liệu."
+  },
+  "tactics_detected": [
+    {
+      "tactic": "AUTHORITY",
+      "evidence": "Mạo danh cơ quan công an/thuế với văn phong đe dọa pháp lý"
+    },
+    {
+      "tactic": "URGENCY",
+      "evidence": "Yêu cầu chuyển tiền trong vòng 2 giờ"
+    }
+  ],
+  "extracted_entities": {
+    "bank_accounts": ["190388889999"],
+    "phones": ["0987654321"],
+    "urls": ["http://thue-xacminh-vn.xyz"]
+  },
+  "web_grounding_intel": {
+    "searched": true,
+    "summary": "Tên miền lạ không thuộc cổng thông tin chính thức của cơ quan nhà nước (.gov.vn).",
+    "citations": []
+  },
+  "advice_for_family": "Tuyệt đối không chuyển tiền hoặc bấm vào đường link trong tin nhắn này."
+}
+```
+
+### `POST /api/v1/ai/ops-copilot`
+Sinh `case_summary`, mức độ ưu tiên (`priority_badge`), `call_script` hạ nhiệt tâm lý thích ứng theo `PersonaContext`, `guidance_sms` và 3 `verification_questions`.
+
+### `POST /api/v1/ai/verify-entity`
+Tra cứu pháp nhân & enrich ngữ cảnh bên ngoài cho `recipient_name`, `tax_code`, số điện thoại hoặc URL (kết hợp **VietQR Tax API `api.vietqr.io/v2/business/{taxCode}`** + **PhishVN URL Lexical Check** + **Google Search Grounding Agent**).
+- **Request Body:**
+```json
+{
+  "recipient_name": "CONG TY CO PHAN FPT",
+  "tax_code": "0101248141",
+  "url": null,
+  "phone": null,
+  "enable_web_search": true
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "recipient_entity_type": "CORPORATION",
+  "tax_lookup": {
+    "found": true,
+    "tax_code": "0101248141",
+    "legal_name": "CÔNG TY CỔ PHẦN FPT",
+    "status": "NNT đang hoạt động",
+    "address": "Số 10 phố Phạm Văn Bạch, Phường Cầu Giấy, TP Hà Nội"
+  },
+  "url_risk": null,
+  "web_grounding_intel": {
+    "searched": true,
+    "summary": "Doanh nghiệp công nghệ niêm yết hợp pháp tại Việt Nam, không ghi nhận cảnh báo lừa đảo.",
+    "citations": [
+      {
+        "title": "FPT Corporation",
+        "url": "https://fpt.com"
+      }
+    ]
+  }
+}
+```
 
 ---
 
