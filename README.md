@@ -52,19 +52,18 @@ Trọng tâm thể hiện chủ đề *"Imagine the Future Workspace"*:
 
 ## 3. Kiến trúc AI Cốt lõi (AI-Native Core — Google Gemini)
 
-`waterpeach` vận hành dựa trên **3 động cơ AI** sử dụng **Google Gemini SDK (`google-genai`)** với **Structured Outputs (JSON)**:
+`waterpeach` vận hành dựa trên **3 động cơ AI** sử dụng **Google Gemini SDK (`google-genai`, model `gemini-4-hydrogen`)** với **Structured Outputs (JSON)**, kết hợp **Ma trận Chấm điểm Đa chiều**, **Giám định Ảnh Kỹ thuật số (ELA/EXIF)** và **Google Search Grounding** (chi tiết học thuật & công thức xem tại **[docs/AI_ARCHITECTURE.md](docs/AI_ARCHITECTURE.md)**):
 
 1. **Động cơ 1 — Contextual Transaction Risk Engine (`/api/v1/ai/analyze-tx`):**
-   - *Đầu vào:* Payload giao dịch (số tiền, tài khoản đích mới/cũ, thời gian, nội dung chuyển khoản) + Baseline profile + Threat Blacklist.
-   - *Xử lý:* Phân tích ngữ nghĩa nội dung chuyển khoản (nhận diện cụm từ ẩn ý như *"nộp tạm giữ"*, *"chứng minh tài chính"*, *"làm nhiệm vụ"*, *"mở khóa tài khoản"*).
-   - *Đầu ra:* `risk_score` (0–100), `risk_level` (`LOW` | `MEDIUM` | `HIGH` | `CRITICAL`), `scam_category`, `reasoning_for_victim`, `reasoning_for_guardian`.
+   - *Đầu vào:* Payload giao dịch (số tiền, `recipient_name` & MST nếu có, lịch sử quan hệ, cửa sổ trượt RFM/tần suất, tín hiệu cuộc gọi `in_active_call`, nội dung chuyển khoản) + `PersonaContext` (độ tuổi & quan hệ gia đình).
+   - *Xử lý:* Ma trận Chấm điểm 5 chiều (RFM & Structuring Detection + Payee Relationship Graph + Behavioral Coercion Telemetry + Semantic NLP + Threat Intel) — phân biệt chính xác bạn bè chuyển tiền điện với kẻ gian giả danh, bắt trọn hành vi chia nhỏ giao dịch lách hạn mức.
+   - *Đầu ra:* `risk_score` (0–100), `risk_level` (`LOW` | `MEDIUM` | `HIGH` | `CRITICAL`), `scam_category`, `reasoning_for_victim` (tự động thích ứng giọng văn theo hồ sơ), `reasoning_for_guardian`.
 2. **Động cơ 2 — Multimodal Scam Analyzer (`/api/v1/ai/analyze-scam`):**
-   - *Đầu vào:* Hình ảnh chụp màn hình tin nhắn, văn bản giả mạo, hoặc text/audio hội thoại.
-   - *Xử lý:* Phân tích thị giác & đa phương thức nhằm phát hiện bất thường văn bản giả mạo và 4 thủ thuật thao túng tâm lý (*Urgency, Authority, Fear, Greed*).
-   - *Đầu ra:* Kết luận rủi ro, dấu hiệu thao túng cụ thể, và trích xuất thực thể nguy hiểm (`IOCs`: STK, SĐT, URL) nạp vào Threat Intelligence DB.
-3. **Động cơ 3 — Agentic Fraud Ops Copilot (`/api/v1/ai/ops-copilot`):**
-   - *Đầu vào:* Ngữ cảnh giao dịch + Phản hồi người giám hộ + Bằng chứng đa phương thức + Dữ liệu chéo trong DB.
-   - *Xử lý & Đầu ra:* Tổng hợp Case Summary, đề xuất hành động xử lý kèm độ tự tin, và sinh Call Script hạ nhiệt tâm lý nạn nhân.
+   - *Đầu vào:* Hình ảnh chụp màn hình tin nhắn, công văn/hóa đơn giả, hoặc text/audio hội thoại.
+   - *Xử lý:* Giám định ảnh mức điểm ảnh (**ELA Error Level Analysis** + quét **EXIF Software Signature**) kết hợp **Gemini VLM**, bộ phân tích URL **PhishVN**, và nhận diện 5 thủ thuật thao túng tâm lý PPSE (*Authority, Urgency, Fear, Greed, Reciprocity/Commitment*).
+   - *Đầu ra:* Kết luận rủi ro, báo cáo giám định ảnh, dấu hiệu thao túng cụ thể và trích xuất thực thể nguy hiểm (`IOCs`: STK, SĐT, URL).
+3. **Động cơ 3 — Agentic Fraud Ops Copilot (`/api/v1/ai/ops-copilot`) & Entity Verifier (`/api/v1/ai/verify-entity`):**
+   - *Xử lý & Đầu ra:* Tra cứu MST thực tế qua **VietQR Business API**, tìm kiếm đối chiếu thông tin trên Google (`google_search` grounding), tổng hợp Case Summary và sinh Call Script hạ nhiệt cá nhân hóa theo `PersonaContext`.
 
 ---
 
@@ -91,6 +90,7 @@ flowchart LR
 waterpeach/
 ├── AGENTS.md                       # Quy chuẩn Harness Engineering (Git branching, separation of concerns, verify gate)
 ├── docs/
+│   ├── AI_ARCHITECTURE.md          # Kiến trúc AI, Ma trận 5 chiều, Giám định ELA, Anti-Abuse & Tài liệu khoa học
 │   └── API_CONTRACT.md             # Đặc tả đầy đủ REST Endpoints, JSON Schemas, B2B Risk API & Realtime Events
 ├── waterpeach-web/                 # Frontend Server (Next.js App Router + TypeScript + Tailwind CSS + pnpm)
 │   ├── src/
@@ -161,7 +161,7 @@ Chi tiết payload request/response, mã trạng thái và cấu trúc sự ki�
 | | `GET /api/v1/ops/incidents/{tx_id}/brief` | AI Case Brief + Network Intel + De-escalation Call Script |
 | | `POST /api/v1/ops/incidents/{tx_id}/action` | 1-Click Containment (hoàn tiền, blacklist, xuất báo cáo) |
 | | `GET` / `POST` / `api/v1/ops/blacklist` | Tra cứu & cập nhật danh sách đen hệ thống |
-| **AI Engines** | `POST /api/v1/ai/analyze-tx`, `/analyze-scam`, `/ops-copilot` | Gọi trực tiếp 3 động cơ AI Gemini |
+| **AI Engines** | `POST /api/v1/ai/analyze-tx`, `/analyze-scam`, `/ops-copilot`, `/verify-entity` | Gọi trực tiếp 3 động cơ AI Gemini & Agent tra cứu MST/Google Search |
 | **Demo & Realtime** | `POST /api/v1/demo/scenario/{1\|2\|3}`, `/demo/reset` | Kịch bản mẫu 1-chạm & reset dữ liệu sạch |
 | | `WS /api/v1/ws/events` | Kênh đẩy sự kiện real-time giữa 3 vai trò |
 

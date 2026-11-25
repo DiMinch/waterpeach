@@ -104,7 +104,7 @@ Mọi thay đổi trước khi merge vào `main` phải chạy qua bộ lệnh k
 ```bash
 # Backend & AI (waterpeach-api)
 uv --directory waterpeach-api run ruff check .
-uv --directory waterpeach-api run pytest
+uv --directory waterpeach-api run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
 
 # Frontend (waterpeach-web)
 pnpm --dir waterpeach-web lint

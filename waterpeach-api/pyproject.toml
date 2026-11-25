@@ -1,14 +1,15 @@
 [project]
 name = "waterpeach-api"
 version = "0.1.0"
-description = "Add your description here"
-readme = "README.md"
+description = "Unified FastAPI Backend & AI Engine for waterpeach"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.20.1",
     "asyncpg>=0.32.0",
     "fastapi[standard]>=0.165.0",
     "google-genai>=3.6.1",
+    "numpy>=2.5.5",
+    "pillow>=13.0.0",
     "pydantic>=2.14.4",
     "pydantic-settings>=2.16.3",
     "python-multipart>=0.0.34",
@@ -24,5 +25,19 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.2.0",
     "pytest-asyncio>=1.5.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.6",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "--cov=app --cov-report=term-missing --cov-fail-under=80"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
