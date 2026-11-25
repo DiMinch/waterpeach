@@ -1,0 +1,59 @@
+name: waterpeach CI
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-ai-ci:
+    name: Backend & AI (Ruff + Pytest >=80% Coverage)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv --directory waterpeach-api sync --frozen
+
+      - name: Run Ruff lint
+        run: uv --directory waterpeach-api run ruff check .
+
+      - name: Run Pytest with Coverage Gate (>=80%)
+        run: uv --directory waterpeach-api run pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+
+  frontend-web-ci:
+    name: Frontend (Lint + Next.js Build)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+          cache-dependency-path: waterpeach-web/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm --dir waterpeach-web install --frozen-lockfile
+
+      - name: Run ESLint
+        run: pnpm --dir waterpeach-web lint
+
+      - name: Run Next.js production build
+        run: pnpm --dir waterpeach-web build
