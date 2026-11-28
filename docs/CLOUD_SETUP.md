@@ -136,14 +136,19 @@ gcloud run deploy waterpeach-api \
   --source waterpeach-api \
   --allow-unauthenticated \
   --min-instances 1 \
+  --max-instances 1 \
   --timeout 3600 \
   --set-env-vars '^@^APP_ENV=cloud@DEBUG=false@GEMINI_MODEL=gemini-4-hydrogen@SUPABASE_URL=https://<project-ref>.supabase.co@CORS_ORIGINS=["https://<your-app>.vercel.app"]' \
   --set-secrets 'DATABASE_URL=wp-database-url:latest,DIRECT_URL=wp-direct-url:latest,SUPABASE_SERVICE_ROLE_KEY=wp-supabase-service-role-key:latest,GEMINI_API_KEY=wp-gemini-api-key:latest,B2B_API_KEY=wp-b2b-api-key:latest,REDIS_URL=wp-redis-url:latest'
 ```
 
 - `--min-instances 1`: tránh cold start khi giám khảo mở demo.
+- `--max-instances 1`: sự kiện realtime (WebSocket/SSE) chỉ phát trong một tiến trình; nhiều instance thì màn hình này có thể không thấy sự kiện của màn hình kia.
 - `--timeout 3600`: giữ kết nối WebSocket `/api/v1/ws/events` lâu nhất có thể.
 - Container đọc biến `PORT` do Cloud Run cấp (Dockerfile mặc định 8000 khi chạy local).
+- Mỗi lần khởi động, container chạy `alembic upgrade head` qua `DIRECT_URL` rồi nạp dữ liệu demo nếu DB còn trống
+  (Bác Minh, Anh Nam, Chị Linh). Muốn tắt bước này: thêm `RUN_MIGRATIONS_ON_START=false` vào `--set-env-vars`
+  và chạy migration thủ công theo bước 9.
 
 Lấy URL dịch vụ:
 
@@ -197,8 +202,12 @@ Dùng khi cần chạy migration/seed lên Supabase từ máy mình:
 
 ```bash
 cd waterpeach-api
-ENV_FILE=.env.cloud uv run <lệnh>
+ENV_FILE=.env.cloud uv run alembic upgrade head      # tạo/cập nhật bảng trên Supabase
+ENV_FILE=.env.cloud uv run python -m app.seed         # nạp dữ liệu demo nếu DB trống
+ENV_FILE=.env.cloud uv run python -m app.seed --reset # xóa và nạp lại dữ liệu demo
 ```
+
+Trong lúc demo có thể reset dữ liệu bằng `POST /api/v1/demo/reset`.
 
 Biến môi trường thật luôn được ưu tiên hơn giá trị trong file.
 

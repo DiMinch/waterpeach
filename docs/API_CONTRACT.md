@@ -40,13 +40,19 @@ Tài liệu đặc tả giao thức giao tiếp giữa **Frontend (`waterpeach-w
 ## 2. Health & System
 
 ### `GET /health`
-Kiểm tra tình trạng server, Supabase DB và Redis.
+Liveness: server đang chạy (không kiểm tra DB/Redis).
 - **Response `200 OK`:**
 ```json
 {
   "status": "ok",
   "service": "waterpeach-api"
 }
+```
+
+### `GET /health/ready`
+Readiness: kiểm tra Database và Redis (Redis `skipped` khi `REDIS_URL` rỗng). Trả `503` + `"status": "degraded"` nếu có thành phần lỗi.
+```json
+{ "status": "ok", "env": "local", "checks": { "database": "ok", "redis": "ok" } }
 ```
 
 ---
@@ -67,13 +73,17 @@ Endpoint chuẩn B2B cho phép Core Banking / Ví điện tử gửi payload gia
   "amount": 25000000,
   "transfer_note": "Nop tien tam giu xac minh ho so",
   "device_id": "dev_iphone_minh",
-  "timestamp": "2026-11-25T14:30:00+07:00"
+  "timestamp": "2026-11-25T14:30:00+07:00",
+  "in_active_call": false,
+  "is_copy_pasted_account": false
 }
 ```
+*(`in_active_call`, `is_copy_pasted_account`: telemetry tùy chọn, mặc định `false`. `sender_id` phải là tài khoản `victim` đã có trong hệ thống.)*
 - **Response `200 OK`:**
 ```json
 {
   "tx_id": "tx_9f8a7b6c",
+  "partner_tx_ref": "MOMO-20261125-001",
   "status": "cooling_off",
   "cooling_off_seconds": 900,
   "blacklist_hit": false,
@@ -82,11 +92,14 @@ Endpoint chuẩn B2B cho phép Core Banking / Ví điện tử gửi payload gia
     "risk_level": "CRITICAL",
     "scam_category": "POLICE_IMPERSONATION",
     "reasoning_for_victim": "Giao dịch này có nội dung giống kịch bản mạo danh cơ quan chức năng yêu cầu chuyển tiền xác minh. Hệ thống đã tạm giữ 15 phút để người thân kiểm tra giúp bác.",
-    "reasoning_for_guardian": "Phát hiện nội dung chuyển khoản chứa dấu hiệu giả danh cơ quan công an yêu cầu nộp tiền xác minh, vượt ngưỡng giao dịch 5.000.000đ."
+    "reasoning_for_guardian": "Phát hiện nội dung chuyển khoản chứa dấu hiệu giả danh cơ quan công an yêu cầu nộp tiền xác minh, vượt ngưỡng giao dịch 5.000.000đ.",
+    "detected_signals": ["FIRST_TIME_PAYEE", "ENTITY_CONTEXT_MISMATCH"],
+    "used_fallback": false
   },
   "guardian_notified": true
 }
 ```
+- **Lỗi:** `401` thiếu/sai `X-API-Key`; `400 INSUFFICIENT_BALANCE`; `403 ROLE_NOT_ALLOWED`; `404 USER_NOT_FOUND`.
 
 ---
 
@@ -94,7 +107,7 @@ Endpoint chuẩn B2B cho phép Core Banking / Ví điện tử gửi payload gia
 
 ### `GET /api/v1/users/{user_id}/profile`
 Lấy hồ sơ tài khoản Mobile Banking của Thành viên được bảo vệ (Bác Minh) để hiển thị màn hình Home: số dư ví thật (`balance`), số tài khoản, cấu hình ngưỡng bảo vệ và lịch sử giao dịch gần đây.
-- **Ràng buộc Privacy-First:** Endpoint này chỉ phục vụ màn hình Mobile Banking của chính chủ tài khoản (`victim`), tuyệt đối không dùng cho vai trò `guardian`.
+- **Ràng buộc Privacy-First:** Endpoint này chỉ phục vụ màn hình Mobile Banking của chính chủ tài khoản (`victim`), tuyệt đối không dùng cho vai trò `guardian` (user khác `victim` → `403 PROFILE_VICTIM_ONLY`).
 - **Response `200 OK`:**
 ```json
 {
@@ -138,6 +151,9 @@ Tra cứu tên chủ tài khoản nhận theo thời gian thực khi người d�
 Khởi tạo giao dịch chuyển tiền từ giao diện Embedded Banking UI (Bác Minh). Gọi qua cùng lõi Risk Engine + Social Circuit Breaker, trừ/tạm giữ số dư thật trên tài khoản `balance`.
 - **Request Body:** Tương tự `POST /api/v1/risk/evaluate` (không bắt buộc `X-API-Key` cho demo web client).
 - **Response `201 Created`:** Trả về object `TransactionDetail` kèm `cooling_off_expires_at` (ISO-8601) nếu bị tạm giữ.
+- **Máy trạng thái & số dư:** `completed` trừ tiền ngay; `cooling_off` tạm giữ (trừ khỏi `balance`); `blocked` hoàn lại phần tạm giữ; `released` giải ngân phần tạm giữ. Tài khoản nhận đã `confirmed_blacklisted` → `blocked` ngay, không trừ tiền.
+- **Hết giờ cooling-off mà chưa ai quyết định:** giao dịch vẫn ở `cooling_off` (tiền vẫn tạm giữ) cho tới khi người giám hộ hoặc Fraud Ops xử lý.
+- **Lỗi:** `400 INSUFFICIENT_BALANCE`, `403 ROLE_NOT_ALLOWED`, `404 USER_NOT_FOUND`.
 
 ### `GET /api/v1/transactions/{tx_id}`
 Lấy trạng thái mới nhất của giao dịch (bao gồm đếm ngược cooling-off, phản hồi của người giám hộ và Fraud Ops).
@@ -163,12 +179,16 @@ Lấy trạng thái mới nhất của giao dịch (bao gồm đếm ngược co
   },
   "guardian_decision": "pending",
   "ops_decision": "pending",
+  "blacklist_hit": false,
+  "guardian_notified": false,
   "created_at": "2026-11-25T14:30:00+07:00"
 }
 ```
+*(`ai_analysis` còn có `risk_score`, `detected_signals`, `used_fallback`. `guardian_notified` chỉ có giá trị đúng trong response tạo giao dịch.)*
 
 ### `GET /api/v1/family/trusted-circle?victim_id={victim_id}`
 Lấy danh sách thành viên trong Vòng tròn tin cậy (nhóm gia đình) và cấu hình ngưỡng bảo vệ (Privacy-First).
+- **Response `200 OK`:** `{ "victim_id", "victim_name", "members": FamilyLink[], "settings": { "protection_threshold", "sensitive_hours_enabled", "auto_trigger_high_risk" }, "privacy_commitment" }`.
 
 ### `POST /api/v1/family/members`
 Tạo / mời thêm thành viên giám hộ vào Nhóm Gia đình (Trusted Circle) của người được bảo vệ.
@@ -181,7 +201,9 @@ Tạo / mời thêm thành viên giám hộ vào Nhóm Gia đình (Trusted Circl
   "relationship": "Con gái"
 }
 ```
-- **Response `201 Created`:** Trả về đối tượng `FamilyLink` vừa tạo (`link_id`, `guardian_id`, `guardian_name`, `relationship`, `privacy_mode: "alert_only"`, `status: "active"`).
+- **Response `201 Created`:** Trả về đối tượng `FamilyLink` vừa tạo (`link_id`, `guardian_id`, `guardian_name`, `guardian_phone`, `relationship`, `privacy_mode: "alert_only"`, `status: "active"`).
+- SĐT chưa có tài khoản sẽ được tạo user vai trò `guardian`. `relationship` là quan hệ của người giám hộ với người được bảo vệ (VD "Con gái"); hệ thống suy ra `GuardianRelationship` để AI chọn giọng văn.
+- **Lỗi:** `409 MEMBER_EXISTS`, `409 PHONE_IN_USE`, `403 ROLE_NOT_ALLOWED`, `404 LINK_NOT_FOUND` (khi xóa).
 
 ### `DELETE /api/v1/family/members/{link_id}`
 Gỡ bỏ một thành viên giám hộ khỏi Nhóm Gia đình (`Trusted Circle`).
@@ -203,6 +225,8 @@ Cập nhật ngưỡng bảo vệ cho người được bảo vệ (`protection_
   "sensitive_hours_enabled": true
 }
 ```
+- Các trường cấu hình đều tùy chọn (chỉ cập nhật trường được gửi). **Response `200 OK`:** `ProtectionSettings`.
+- Khung giờ nhạy cảm: 22:00–06:00 giờ Việt Nam.
 
 ---
 
@@ -217,8 +241,10 @@ Lấy danh sách cảnh báo khẩn cấp dành cho Người giám hộ (Anh Nam
   "alerts": [
     {
       "tx_id": "tx_9f8a7b6c",
+      "victim_id": "usr_minh_01",
       "victim_name": "Bác Minh",
-      "relationship": "Bố",
+      "relationship": "Con trai",
+      "recipient_name": "NGUYEN VAN A",
       "amount": 25000000,
       "recipient_account": "190388889999",
       "recipient_bank": "Techcombank",
@@ -239,7 +265,8 @@ Lấy danh sách cảnh báo khẩn cấp dành cho Người giám hộ (Anh Nam
 Người giám hộ thực hiện quyết định 1-chạm:
 - **`flag_scam` (Nút Đỏ):** Chuyển giao dịch sang `blocked`, đẩy hồ sơ lên mức `CRITICAL` ở Fraud Ops Workspace, gửi thông điệp trấn an cho nạn nhân.
 - **`approve_safe` (Nút Xanh):** Chuyển giao dịch sang `released`, tự động đóng cảnh báo giả (`false_positive`) phía Fraud Ops.
-- **`hold_verify` (Nút Vàng):** Gia hạn `cooling_off_expires_at` thêm 30 phút và trả về danh sách câu hỏi gợi ý xác minh nhẹ nhàng.
+- **`hold_verify` (Nút Vàng):** Gia hạn `cooling_off_expires_at` thêm 30 phút và trả về danh sách câu hỏi gợi ý xác minh nhẹ nhàng. Giao dịch vẫn `cooling_off`, người giám hộ vẫn bấm Đỏ/Xanh được sau đó.
+- Chỉ áp dụng cho giao dịch đang `cooling_off` của người trong Trusted Circle. **Lỗi:** `403 ROLE_NOT_ALLOWED`, `403 NOT_GUARDIAN_OF_SENDER`, `409 TX_NOT_PENDING`, `409 INVALID_DECISION`.
 - **Request Body:**
 ```json
 {
@@ -260,8 +287,11 @@ Người giám hộ thực hiện quyết định 1-chạm:
 }
 ```
 
+*(`relationship` trong cảnh báo là nhãn quan hệ lưu trên `FamilyLink`, tức quan hệ của người giám hộ với người được bảo vệ.)*
+
 ### `GET /api/v1/family/safety-feed?family_member_id={user_id}`
-Lấy Bảng tin An toàn Gia đình gồm các báo cáo lừa đảo đã được chia sẻ cho cả nhà.
+Lấy Bảng tin An toàn Gia đình gồm các báo cáo lừa đảo đã được chia sẻ cho cả nhà (cùng báo cáo riêng của chính người xem).
+- **Response `200 OK`:** `{ "items": [{ "report_id", "submitted_by", "submitted_by_name", "verdict", "risk_score", "scam_category", "summary", "advice_for_family", "tactics_detected", "created_at" }] }`. Vai trò `fraud_ops` → `403`.
 
 ---
 
@@ -297,10 +327,16 @@ Phân tích ảnh chụp màn hình tin nhắn Zalo/SMS, công văn giả, hoặ
     "phones": ["0987654321"],
     "urls": ["http://thue-xacminh-vn.xyz"]
   },
+  "forensic_analysis": null,
+  "advice_for_family": "Tuyệt đối không chuyển tiền hoặc bấm vào đường link trong tin nhắn này.",
+  "blacklisted_entities_count": 3,
   "shared_to_family": true,
+  "used_fallback": false,
   "created_at": "2026-11-25T14:35:00+07:00"
 }
 ```
+- Verdict khác `SAFE`: mọi thực thể trích xuất được đưa vào `threat_blacklist` ở trạng thái `suspected` (đã có thì tăng `report_count`). `share_to_family = true` phát sự kiện `FAMILY_SCAM_ALERT_SHARED`.
+- **Lỗi:** `400 INVALID_SCAM_INPUT` (không có text lẫn file, file sai định dạng), `400 FILE_TOO_LARGE` (> 5 MB). Ảnh chưa được lưu lên storage nên chưa có `image_url`.
 
 ---
 
@@ -321,8 +357,9 @@ Lấy Hàng đợi Ưu tiên Thông minh (AI-Triaged Incident Queue). Sắp xế
       "tx_id": "tx_9f8a7b6c",
       "priority_badge": "CRITICAL_GUARDIAN_FLAGGED",
       "victim_name": "Bác Minh",
-      "victim_age_group": "60+",
+      "victim_age_group": "55_plus_senior",
       "amount": 25000000,
+      "recipient_name": "NGUYEN VAN A",
       "recipient_account": "190388889999",
       "ai_risk_score": 94,
       "guardian_decision": "flag_scam",
@@ -346,13 +383,17 @@ Lấy **AI Case Brief** tổng hợp + đối chiếu **Network Threat Intellige
   "network_threat_intel": {
     "matched_reports_count": 2,
     "matched_entities": ["190388889999"],
-    "cross_family_alert": true
+    "cross_family_alert": true,
+    "blacklist_status": "suspected"
   },
   "deescalation_copilot": {
     "victim_psychological_state": "Lo âu, bị cô lập bởi kịch bản đe dọa pháp lý",
     "call_script": "Chào bác Minh, cháu là Linh từ bộ phận Bảo vệ Khách hàng. Giao dịch 25 triệu đồng của bác đang được hệ thống và anh Nam tạm giữ để bảo vệ tài sản...",
-    "guidance_sms": "Cảnh báo: Công an/Tòa án KHÔNG bao giờ yêu cầu chuyển tiền qua tài khoản cá nhân để xác minh hồ sơ."
-  }
+    "guidance_sms": "Cảnh báo: Công an/Tòa án KHÔNG bao giờ yêu cầu chuyển tiền qua tài khoản cá nhân để xác minh hồ sơ.",
+    "verification_questions": ["..."]
+  },
+  "priority_badge": "CRITICAL_GUARDIAN_FLAGGED",
+  "used_fallback": false
 }
 ```
 
@@ -368,10 +409,15 @@ Thực hiện hành động 1-chạm (1-Click Containment Actions).
 }
 ```
 *(Giá trị `action`: `"cancel_and_refund"` | `"blacklist_recipient"` | `"release_transaction"` | `"export_report"`)*
-- **Response `200 OK`:** Trả về trạng thái cập nhật của giao dịch, bản ghi blacklist mới tạo (nếu có) và payload `incident_report` JSON chuẩn hóa.
+- **Response `200 OK`:** `{ "transaction": TransactionDetail, "blacklist_entry": BlacklistEntry | null, "incident_report": { "report_id", "generated_at", "ops_id", "ops_name", "action", "notes", "transaction", "network_threat_intel", "blacklist_entry" } }`.
+- Hiệu lực: `cancel_and_refund` → `blocked` + hoàn tiền tạm giữ, `ops_decision = confirmed_fraud`; `blacklist_recipient` → như trên + STK nhận `confirmed_blacklisted`; `release_transaction` → `released`, `ops_decision = false_positive`; `export_report` không đổi trạng thái. `add_to_blacklist = true` đưa STK nhận vào blacklist với mọi hành động.
+- **Lỗi:** `403 ROLE_NOT_ALLOWED` (không phải `fraud_ops`), `409 TX_NOT_AN_INCIDENT` (giao dịch `completed`), `409 TX_ALREADY_RESOLVED`.
+- Hàng đợi: incident là mọi giao dịch khác `completed`; `active` = `cooling_off`/`blocked` và `ops_decision = pending`; `auto_resolved` = người giám hộ đã bấm `approve_safe`. `false_positive_reduction_pct` = tỉ lệ incident tự đóng nhờ người giám hộ.
 
 ### `GET /api/v1/ops/blacklist` & `POST /api/v1/ops/blacklist`
 Tra cứu và bổ sung thủ công thực thể vào Threat Blacklist (`bank_account`, `phone`, `url`).
+- **GET** query tùy chọn: `entity_type`, `status` (`suspected` | `confirmed_blacklisted`), `q` (tìm theo giá trị). Response `{ "entries": BlacklistEntry[] }`, `BlacklistEntry = { id, entity_type, entity_value, report_count, scam_pattern, status, created_at, updated_at }`.
+- **POST** body `{ "entity_type", "entity_value", "scam_pattern"?, "status"? = "confirmed_blacklisted" }` → `201 BlacklistEntry`. Giá trị được chuẩn hóa (SĐT `+84` → `0`, STK chỉ giữ chữ số, URL chữ thường). Trạng thái chỉ tăng, không hạ.
 
 ---
 
@@ -520,9 +566,14 @@ Tra cứu pháp nhân & enrich ngữ cảnh bên ngoài cho `recipient_name`, `t
 
 ### 9.1. Demo Endpoints
 - `POST /api/v1/demo/scenario/{scenario_id}` (`1`, `2`, hoặc `3`): Kích hoạt nhanh 1 trong 3 kịch bản mẫu từ Proposal.
-- `POST /api/v1/demo/reset`: Khôi phục dữ liệu sạch về trạng thái demo ban đầu (xóa giao dịch phát sinh, nạp lại seed users: Bác Minh, Anh Nam, Chị Linh).
+- `POST /api/v1/demo/reset`: Khôi phục dữ liệu sạch về trạng thái demo ban đầu (xóa giao dịch phát sinh, nạp lại seed users: Bác Minh `usr_minh_01`, Anh Nam `usr_nam_02`, Chị Linh `usr_linh_03`). Response `{ "reset": true, "users": 3, "transactions": 3 }`.
+- Response của `scenario`: `{ "scenario_id", "title", "next_step", "transaction": TransactionDetail | null, "scam_report": ScamCheckResponse | null }` (kịch bản 1, 2 trả `transaction`; kịch bản 3 trả `scam_report`).
 
 ### 9.2. Realtime Event Payload (`ws://localhost:8000/api/v1/ws/events`)
+- Lọc theo vai trò: `?role=victim|guardian|fraud_ops` (bỏ trống = nhận tất cả). SSE dự phòng: `GET /api/v1/events/stream?role=...`, mỗi sự kiện gửi dạng `event: <EVENT>` + `data: <envelope JSON>`, keep-alive mỗi 15 giây.
+- Payload giao dịch: `{ tx_id, status, risk_level, victim_id, amount, guardian_decision, ops_decision }` (+ `action` cho `OPS_CONTAINMENT_EXECUTED`). `FAMILY_SCAM_ALERT_SHARED`: `{ report_id, submitted_by, submitted_by_name, verdict, risk_score, summary }`. `DEMO_DATA_RESET`: `{ users, transactions }`.
+- Sự kiện chỉ phát trong một tiến trình API: chạy 1 instance (Cloud Run `--max-instances 1`).
+
 Mọi sự kiện real-time phát tới 3 phân hệ tuân theo cấu trúc envelope:
 ```json
 {

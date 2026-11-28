@@ -237,8 +237,11 @@ docker compose up -d postgres redis
 cd waterpeach-api
 cp .env.example .env
 uv sync
+uv run alembic upgrade head        # tạo bảng
+uv run python -m app.seed          # nạp Bác Minh, Anh Nam, Chị Linh (thêm --reset để làm lại)
 uv run uvicorn app.main:app --reload --port 8000
 ```
+*(Khi chạy bằng Docker Compose, container API tự chạy migration và nạp dữ liệu demo lúc khởi động.)*
 
 #### 3. Khởi chạy Frontend (`waterpeach-web`)
 ```bash
