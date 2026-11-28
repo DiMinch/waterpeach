@@ -17,4 +17,8 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8000
 
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Apply migrations + load demo seed (only when empty), then serve.
+# Cloud Run injects PORT; local docker compose uses the default 8000.
+# Set RUN_MIGRATIONS_ON_START=false to skip the migration/seed step.
+ENV RUN_MIGRATIONS_ON_START=true
+CMD ["sh", "-c", "if [ \"$RUN_MIGRATIONS_ON_START\" = true ]; then uv run --no-dev alembic upgrade head && uv run --no-dev python -m app.seed; fi && exec uv run --no-dev uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

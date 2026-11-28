@@ -11,7 +11,7 @@ from app.schemas.ai import (
 )
 
 
-def _compute_priority_badge(request: OpsCopilotRequest) -> PriorityBadge:
+def compute_priority_badge(request: OpsCopilotRequest) -> PriorityBadge:
     """Deterministically triage incident priority using Guardian signal + AI score."""
     if request.guardian_decision == GuardianDecision.APPROVE_SAFE:
         return PriorityBadge.AUTO_RESOLVED_SAFE
@@ -28,7 +28,7 @@ async def generate_ops_copilot_brief(
 ) -> OpsCopilotBrief:
     """Generate AI Case Brief and adaptive De-escalation Copilot script for Fraud Ops."""
     client = ai_client or get_gemini_client()
-    priority_badge = _compute_priority_badge(request)
+    priority_badge = compute_priority_badge(request)
 
     llm_input = (
         f"Mã giao dịch: {request.tx_id}\n"
