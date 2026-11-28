@@ -50,6 +50,8 @@ htmlcov/
 **/.env
 **/.env.local
 **/.env.*.local
+.env.cloud
+**/.env.cloud
 !.env.example
 !**/.env.example
 
