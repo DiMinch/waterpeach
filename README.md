@@ -122,8 +122,8 @@ waterpeach/
 │   ├── Dockerfile
 │   └── pyproject.toml
 │
-├── docker-compose.yml              # Khởi chạy Redis, API, Web (kèm profile local-db dự phòng)
-├── .env.example                    # Biến môi trường mẫu (Supabase, Redis, Gemini)
+├── docker-compose.yml              # Môi trường local: Postgres, Redis, API, Web
+├── .env.example                    # Biến môi trường mẫu cho local (cloud: docs/CLOUD_SETUP.md)
 ├── .gitignore
 └── README.md
 ```
@@ -199,32 +199,37 @@ Sản phẩm được thiết kế như một **ứng dụng Mobile Banking hoà
 
 ## 8. Hướng dẫn Cài đặt & Khởi chạy
 
+Dự án có 2 môi trường, chọn bằng biến `APP_ENV`:
+
+- **`local`** (mặc định): Postgres + Redis chạy bằng Docker Compose, không cần tài khoản Supabase. Biến môi trường lấy từ các file `.env.example` có sẵn trong repo.
+- **`cloud`**: Supabase + Google Cloud Run (API) + Vercel (Web). Biến môi trường nằm trong `.env.cloud` (không commit). Xem **[docs/CLOUD_SETUP.md](docs/CLOUD_SETUP.md)**.
+
 ### Yêu cầu Tiên quyết
-- **Tài khoản Supabase** (lấy `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `DATABASE_URL` port `6543` và `DIRECT_URL` port `5432`)
-- **Google Gemini API Key** (lấy tại Google AI Studio)
 - **Docker & Docker Compose** (khuyên dùng) hoặc môi trường Local: **Node.js >= 20**, **pnpm**, **Python >= 3.12**, **uv**
+- **Google Gemini API Key** (lấy tại Google AI Studio). Không có key thì AI chạy fallback heuristic.
+- Chỉ cho môi trường cloud: tài khoản **Supabase**, **Google Cloud** và **Vercel**.
 
-### Cách 1: Chạy bằng Docker Compose (Khuyên dùng)
+### Cách 1: Local bằng Docker Compose (Khuyên dùng)
 
-1. Tạo file `.env` từ file mẫu ở thư mục gốc và điền thông tin **Supabase** + **`GEMINI_API_KEY`**:
+1. Tạo file `.env` từ file mẫu ở thư mục gốc, điền `GEMINI_API_KEY`:
    ```bash
    cp .env.example .env
    ```
-2. Khởi chạy hệ thống (`redis`, `waterpeach-api`, `waterpeach-web`):
+2. Khởi chạy `postgres`, `redis`, `waterpeach-api`, `waterpeach-web`:
    ```bash
    docker compose up --build
    ```
-   *(Nếu muốn chạy PostgreSQL cục bộ thay vì Supabase Cloud, dùng profile: `docker compose --profile local-db up --build`)*
 3. Truy cập các dịch vụ:
    - **Frontend Web App:** http://localhost:3000
    - **Backend & AI API (Swagger UI):** http://localhost:8000/docs
    - **Health Check:** http://localhost:8000/health
+   - **Readiness (Database + Redis):** http://localhost:8000/health/ready
 
-### Cách 2: Chạy môi trường Phát triển Local (Development)
+### Cách 2: Local Development (chạy API/Web trực tiếp)
 
-#### 1. Khởi chạy Redis (Cache & Realtime Pub/Sub)
+#### 1. Khởi chạy Postgres + Redis
 ```bash
-docker compose up -d redis
+docker compose up -d postgres redis
 ```
 
 #### 2. Khởi chạy Unified Backend & AI (`waterpeach-api`)
@@ -242,6 +247,10 @@ cp .env.example .env.local
 pnpm install
 pnpm dev
 ```
+
+### Cách 3: Cloud (Supabase + Cloud Run + Vercel)
+
+Làm theo **[docs/CLOUD_SETUP.md](docs/CLOUD_SETUP.md)**. Không commit `.env.cloud` hay bất kỳ secret nào.
 
 ---
 
