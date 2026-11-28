@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_v1_router
 from app.core.config import get_settings
+from app.core.errors import register_error_handlers
 from app.db.redis import check_redis, close_redis
 from app.db.session import check_database, dispose_engine
 
@@ -35,6 +36,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+register_error_handlers(app)
 app.include_router(api_v1_router)
 
 
